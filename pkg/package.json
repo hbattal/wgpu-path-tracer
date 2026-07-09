@@ -1,0 +1,15 @@
+{
+  "name": "wgpu-tracer",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "wgpu_tracer_bg.wasm",
+    "wgpu_tracer.js",
+    "wgpu_tracer.d.ts"
+  ],
+  "main": "wgpu_tracer.js",
+  "types": "wgpu_tracer.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
