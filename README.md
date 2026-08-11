@@ -13,7 +13,7 @@ Excuse the limited capability for now
 Todos:
 - [x] BVH SAH sweep + data via storage buffer
 - [x] Cook-Torrance BRDF + importance sampling the NDF
-- [x] gltf model loading + material integration
+- [x] glTF model loading + material integration
 - [ ] Texture support for the web (Atlas?)
 - [ ] some sort of ui (egui), scenes, etc.
 - [ ] clean and restructure
@@ -36,7 +36,6 @@ Anyways, resources in no particular order:
 - https://www.youtube.com/watch?v=gya7x9H3mV0 -> PBR foundations
 - https://www.youtube.com/watch?v=j-A0mwsJRmk&t=842s
 - https://www.pbr-book.org/4ed/Reflection_Models -> urgent
-
 - https://cseweb.ucsd.edu/~tzli/cse272/wi2026/ - goldmine
 
 Future reads:
