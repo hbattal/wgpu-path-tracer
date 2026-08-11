@@ -1,6 +1,6 @@
 /target
 /dist
-/obj
+/models
 /node_modules
 .vscode
 package-lock.json

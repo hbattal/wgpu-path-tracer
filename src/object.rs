@@ -92,9 +92,12 @@ pub struct TriangleGPU {
     norm0: glam::Vec4,
     norm1: glam::Vec4,
     norm2: glam::Vec4,
+    uv0: glam::Vec2,
+    uv1: glam::Vec2,
+    uv2: glam::Vec2,
 
     mat: u32,
-    _pad: [u32; 3],
+    _pad: u32,
 }
 
 impl TriangleGPU {
@@ -105,6 +108,9 @@ impl TriangleGPU {
         norm0: glam::Vec4,
         norm1: glam::Vec4,
         norm2: glam::Vec4,
+        uv0: glam::Vec2,
+        uv1: glam::Vec2,
+        uv2: glam::Vec2,
         mat: u32,
     ) -> TriangleGPU {
         TriangleGPU {
@@ -114,8 +120,11 @@ impl TriangleGPU {
             norm0,
             norm1,
             norm2,
+            uv0,
+            uv1,
+            uv2,
             mat,
-            _pad: [0, 0, 0],
+            _pad: 0,
         }
     }
 }

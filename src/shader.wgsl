@@ -1,3 +1,5 @@
+enable wgpu_binding_array;
+
 struct input {
     @location(0) pos: vec3f,
     @location(1) uv: vec2f,
@@ -19,7 +21,8 @@ fn main(model: input) -> output {
 }
 
 ////////////////////////////////
-// Some code is based on "gpu-tracing" (https://github.com/RayTracing/gpu-tracing) by Arman Uguray
+// Some code is based on "gpu-tracing" (https://github.com/RayTracing/gpu-tracing)
+// Originally written in 2023 by Arman Uguray <arman.uguray@gmail.com>
 // licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/deed.en)
 
 struct Rng {
@@ -89,6 +92,7 @@ struct HitRecord {
     normal: vec3f,
     t: f32,
     mat: u32,
+    uv: vec2f,
 }
 
 struct Scatter {
@@ -97,15 +101,85 @@ struct Scatter {
 }
 
 struct Material {
-    color: vec3f,
-    roughness: f32,
-    metallic: f32,
+    color_factor: vec4f,
+    color: i32,
+
+    metal_rough: i32,
+    metal_factor: f32,
+    rough_factor: f32,
+
+    emiss_factor: vec4f,
+    emiss: i32,
+    ior: f32,
+}
+
+@group(4) @binding(0)
+var textures: binding_array<texture_2d<f32>>;
+
+//use a sampler?
+fn sample(ind: i32, uv: vec2f) -> vec4f {
+    let size = textureDimensions(textures[ind]);
+    let x = u32(fract(uv.x) * f32(size.x - 1));
+    let y = u32(fract(uv.y) * f32(size.y - 1));
+
+    return textureLoad(textures[ind], vec2(x, y), 0);
 }
 
 struct Sphere {
     center: vec3f,
     rad: f32,
     mat: u32,
+}
+
+fn sphere_pdf(orig: vec3f, direction: vec3f, s:Sphere, normal: vec3f) -> f32{
+    let hit = sphere_intersect(Ray(orig, direction), s);
+
+    if hit.t <= 0.0 {
+        return 0.0;
+    }
+
+    var dir = s.center - orig;
+    var dsq = dot(dir, dir);
+
+    let ratio = clamp(s.rad * s.rad / dsq, 0.0, 1.0);
+
+    let cost_max = sqrt(1.0 - ratio);
+    let solid_angle = 2 * PI  * (1.0 - cost_max);
+
+    return 1 / solid_angle;
+}
+
+
+//Nans if the point is inside the sphere
+//temp hack for sphere IS this should be solved asap there is some nasty fp stuff going on here
+//I either bump the point out, which is not a solution itself as there could be a case where a point needs to scatter inside the sphere we are IS
+//I think its bump (ensure it never ends on the inside) + handle the case where the point is inside the sphere due to edge cases
+fn sphere_dirgen(s: Sphere, orig: vec3f, normal: vec3f) -> vec3f {
+
+    var dir = s.center - orig;
+    var dsq = dot(dir, dir);
+
+    let ratio = clamp(s.rad * s.rad / dsq, 0.0, 1.0);
+
+    let r1 = rand_f32();
+    let r2 = rand_f32();
+
+    let z = 1.0 + r2 * (sqrt(1.0 - ratio) - 1.0);
+
+    let phi = 2 * PI * r1;
+
+    let x = cos(phi) * sqrt(1.0 - z * z);
+    let y = sin(phi) * sqrt(1.0 - z * z);
+
+    let local = vec3(x, y, z);
+
+    dir = normalize(dir);
+
+    let a = select(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), abs(dir.z) > 0.9);
+    let u = normalize(cross(dir, a));
+    let v = normalize(cross(dir, u));
+
+    return normalize(u * local.x + v * local.y + dir * local.z);
 }
 
 struct Triangle {
@@ -115,7 +189,18 @@ struct Triangle {
     norm0: vec4f, //in order a, b, c
     norm1: vec4f,
     norm2: vec4f,
+    uv0: vec2f,
+    uv1: vec2f,
+    uv2: vec2f,
     mat: u32,
+}
+
+fn triangle_pdf() {
+
+}
+
+fn triangle_dirgen() {
+
 }
 
 @group(2) @binding(0)
@@ -203,6 +288,11 @@ fn schlick_vec(f0: vec3f, cost: f32) -> vec3f {
     return mix(f0, vec3(1.), u * u * u * u * u);
 }
 
+fn schlick(f0: f32, cost: f32) -> f32 {
+    let u = 1 - cost;
+    return mix(f0, 1., u * u * u * u * u);
+}
+
 fn luminance(rgb: vec3f) -> f32 {
     return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
 }
@@ -213,26 +303,67 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     let inc = normalize(ray.dir);
     let normal = select(-hit.normal, hit.normal, dot(inc, hit.normal) < 0.0);
 
-    let roughness = clamp(mat.roughness, 0.03, 1.0); //if this is zero bad things happen (D becomes 0/0)
+    var color = mat.color_factor.rgb;
+    var opacity = mat.color_factor.a;
+
+    if mat.color >= 0 {
+        let smp = sample(mat.color, hit.uv);
+        color *= smp.rgb;
+        opacity *= smp.a;
+    }
+
+    var metal = mat.metal_factor;
+    var rough = mat.rough_factor;
+
+    if mat.metal_rough >= 0 {
+        let s = sample(mat.metal_rough, hit.uv);
+        metal *= s.b;
+        rough *= s.g;
+    }
+
+    let roughness = clamp(rough, 0.03, 1.0); //if this is zero bad things happen (D becomes 0/0)
     let a = roughness * roughness;
     let a2 = a * a;
 
     var h: vec3f;
     var scattered: vec3f;
 
-    //MIS, fixed for now
-    let weight = 1 - roughness;//luminance(f);
+    //all below is just temp rn untill there is a proper BSDF
+    if mat.ior > 0.0 && opacity < 1 {
+        let ratio = select(mat.ior, 1 / mat.ior, dot(inc, hit.normal) < 0.0);
+        let cost = abs(dot(inc, normal));
+        let cant = ratio * ratio * (1 - cost * cost) > 1;
 
-    if rand_f32() < weight {
+        let spec = cant || schlick(f0(mat.ior), cost) > rand_f32();
+
+        if spec {
+            return Scatter(vec3(1.0), Ray(at(ray, hit.t), reflect(inc, normal)));
+        } else {
+            return Scatter(vec3(0.6), Ray(at(ray, hit.t), refract(inc, normal, ratio)));
+        }
+    }
+
+    //MIS, fixed for now
+    let spec_weight = 0.3;//1.0 / 3.0;//1 - roughness;//luminance(f);
+    let diff_weight = 0.2;
+    let light_weight = 0.5;
+    let chance = rand_f32();
+
+    var origin = at(ray, hit.t);
+
+    if chance < spec_weight {
         h = sample_microfacet_normal(a2, normal);
         scattered = normalize(reflect(inc, h));
-    } else {
+    } else  if chance < spec_weight + diff_weight {
         scattered = normalize(normal + ssp());
+        h = normalize(-inc + scattered);
+    } else {
+        scattered = sphere_dirgen(spheres[1], origin, normal);
         h = normalize(-inc + scattered);
     }
 
     let ndotl = dot(normal, scattered);
-    let output = Ray(at(ray, hit.t), scattered);
+    let output = Ray(origin, scattered);
 
     //if the generated direction is below the macrosurface normal it causes NaNs
     //l = scattered, v = inc
@@ -249,15 +380,20 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     let ndoth = dot(normal, h);
     let vdoth = dot(-inc, h);
 
-    let f0 = mix(vec3(0.04), mat.color, mat.metallic);
+    let f0 = mix(vec3(0.04), color, metal);
     let F = schlick_vec(f0, vdoth);
     let D = Trowbridge_Reitz_GGX(a2, ndoth);
     let G = Height_Correlated_Smith_GGX(a2, ndotv, ndotl);
     //let G =  Smith_Schlick_GGX(ndotv, ndotl, roughness);
 
     let specular = F * D * G / (4 * ndotl * ndotv);
-    let diffuse = (1.0 - F) * (1.0 - mat.metallic) * (mat.color / PI); //Lambertian BRDF
-    let pdf = ((1.0 - weight) * (ndotl / PI)) + (weight * (D * ndoth) / (4.0 * vdoth)); //see notes for the specular part
+    let diffuse = (1.0 - F) * (1.0 - metal) * (color / PI); //Lambertian BRDF
+
+    let spec_pdf = spec_weight * (D * ndoth) / (4.0 * vdoth);
+    let diff_pdf = diff_weight * (ndotl / PI);
+    let light_pdf = light_weight * sphere_pdf(origin, scattered, spheres[1], normal);
+
+    let pdf = spec_pdf + diff_pdf + light_pdf; //see notes for the specular part
 
     let atten = (specular + diffuse) * ndotl / pdf;
 
@@ -281,7 +417,7 @@ fn sphere_intersect(r: Ray, s: Sphere) -> HitRecord {
     let disc = h * h - a * c;
 
     if disc < 0 {
-        return HitRecord(vec3(0.0), 0.0, 0);
+        return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
     }
 
     let sqrtd = sqrt(disc);
@@ -291,12 +427,12 @@ fn sphere_intersect(r: Ray, s: Sphere) -> HitRecord {
     let root = select(root2, root1, root1 > EPSILON);
 
     if root <= EPSILON { //reject
-        return HitRecord(vec3(0.0), 0.0, 0);
+        return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
     }
 
-    let normal = (at(r, root) - s.center) / s.rad;
+    let normal = normalize((at(r, root) - s.center) / s.rad);
 
-    return HitRecord(normal, root, s.mat);
+    return HitRecord(normal, root, s.mat, vec2(0.0)); //calc UV
 }
 
 fn triangle_intersect(r: Ray, t: Triangle) -> HitRecord {
@@ -307,20 +443,20 @@ fn triangle_intersect(r: Ray, t: Triangle) -> HitRecord {
     let det = dot(e1, ray_cross_e2);
 
     if abs(det) < EPSILON {
-        return HitRecord(vec3(0.0), 0.0, 0);
+        return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
     }
 
     let inv_det = 1.0 / det;
     let s = r.orig - t.a.xyz;
     let u = inv_det * dot(s, ray_cross_e2);
     if u < 0.0 || u > 1.0 {
-        return HitRecord(vec3(0.0), 0.0, 0);
+        return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
     }
 
     let s_cross_e1 = cross(s, e1);
     let v = inv_det * dot(r.dir, s_cross_e1);
     if v < 0.0 || u + v > 1.0 {
-        return HitRecord(vec3(0.0), 0.0, 0);
+        return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
     }
 
     let int = inv_det * dot(e2, s_cross_e1);
@@ -328,11 +464,12 @@ fn triangle_intersect(r: Ray, t: Triangle) -> HitRecord {
     if int > EPSILON {
 
         let normal = (1 - u - v) * t.norm0 + u * t.norm1 + v * t.norm2;
+        let uv = (1 - u - v) * t.uv0 + u * t.uv1 + v * t.uv2;
 
-        return HitRecord(normalize(normal.xyz), int, t.mat);
+        return HitRecord(normalize(normal.xyz), int, t.mat, uv);
     }
 
-    return HitRecord(vec3(0.0), 0.0, 0);
+    return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
 }
 
 fn aabb_intersect(r: Ray, interval: vec2f, x: vec2f, y: vec2f, z: vec2f) -> f32 {
@@ -365,7 +502,7 @@ fn bvh_intersect(r: Ray) -> HitRecord {
     dfs[0] = 0;
     index = 1;
 
-    var closest = HitRecord(vec3(0.0), INF, 0);
+    var closest = HitRecord(vec3(0.0), INF, 0, vec2(0.0));
     var interval: vec2f;
     interval.x = EPSILON;
     interval.y = INF;
@@ -455,11 +592,20 @@ fn fs_main(in: output) -> @location(0) vec4f {
 
         if closest.t < INF {
         } else {
-            cur += vec3(1.) * light;
+            cur += vec3(0.) * light;
             break;
         }
 
         let scatter_ray = scatter(ray, closest, materials[closest.mat]);
+
+        var emiss = materials[closest.mat].emiss_factor.rgb;
+
+        if materials[closest.mat].emiss >= 0 {
+            emiss *= sample(materials[closest.mat].emiss, closest.uv).rgb;
+        }
+
+        cur += light * emiss;
+
         light *= scatter_ray.atten;
         ray = scatter_ray.ray;
     }
@@ -470,7 +616,6 @@ fn fs_main(in: output) -> @location(0) vec4f {
     } else {
         prev = vec3(0.0);
     }
-
 
     let next = cur + prev;
     textureStore(pong, vec2u(in.clip.xy), vec4(next, 0));

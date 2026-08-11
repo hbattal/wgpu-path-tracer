@@ -16,6 +16,7 @@ glam = { version = "0.33.2", features = ["bytemuck"] }
 web-time = "1.1.0" #instant tells you to use web-time
 rand = "0.10.2"
 tobj = "4.0.4"
+gltf = {version = "1.4.1", features = ["KHR_materials_emissive_strength", "KHR_materials_ior"]}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"

@@ -102,7 +102,7 @@ impl Camera {
     }
 
     pub fn update(&mut self, delta: f32) -> bool {
-        let speed = 14.0 * delta; //needs time
+        let speed = 24.0 * delta; //needs time
         self.pos += speed * self.front * self.forward;
         self.pos -= speed * self.front * self.back;
 

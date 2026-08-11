@@ -27,6 +27,9 @@ impl BvhNode {
     pub fn new(mut list: Vec<Rc<dyn Hittable>>) -> BvhNode {
         let len = list.len();
         let mut index = -1;
+
+        println!("started");
+
         BvhNode::actual(&mut list, 0, len, &mut index)
     }
 

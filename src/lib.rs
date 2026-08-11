@@ -132,6 +132,8 @@ pub struct State {
     camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
 
+    images_group: wgpu::BindGroup,
+
     last: Instant,
 }
 
@@ -165,9 +167,10 @@ impl State {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
+                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                required_limits: wgpu::Limits::defaults(),
+                required_limits: adapter.limits(), //wgpu::Limits::defaults(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
@@ -237,7 +240,7 @@ impl State {
         //camera starts
 
         //[26.885092, 20.502254, 22.690096]
-        let camera = camera::Camera::new(glam::vec3(26.88, 20.50, 22.69),   3.79, -0.43);
+        let camera = camera::Camera::new(glam::vec3(26.88, 20.50, 22.69), 3.79, -0.43);
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update(&camera);
@@ -311,7 +314,8 @@ impl State {
 
         //BVH related stuff
 
-        let (bvh_cont, sphere_cont, triangle_cont, material_cont) = Scene::test_model();
+        let (bvh_cont, sphere_cont, triangle_cont, material_cont, images_layout, images_group) =
+            Scene::test_model(&device, &queue);
 
         let bvh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("bvh_buf"),
@@ -417,6 +421,7 @@ impl State {
                 Some(&camera_bind_group_layout),
                 Some(&tex_bind_group_layout),
                 Some(&bvh_layout),
+                Some(&images_layout),
             ],
             immediate_size: 0,
         });
@@ -503,6 +508,7 @@ impl State {
 
             bvh_bind_group,
 
+            images_group,
             last: Instant::now(),
         })
     }
@@ -592,6 +598,7 @@ impl State {
             &[],
         );
         render_pass.set_bind_group(3, &self.bvh_bind_group, &[]);
+        render_pass.set_bind_group(4, &self.images_group, &[]);
 
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

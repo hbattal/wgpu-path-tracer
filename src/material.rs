@@ -1,25 +1,82 @@
+// #[repr(C)]
+// #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+// pub struct MaterialGPU {
+//     color: glam::Vec3,
+//     roughness: f32,
+//     metallic: f32,
+//     ior: f32,
+//     _pad: [f32; 2],
+//     emiss: glam::Vec3,
+//     _pad2: f32,
+// }
+
+// impl MaterialGPU {
+//     pub fn new(
+//         color: glam::Vec3,
+//         roughness: f32,
+//         metallic: f32,
+//         ior: f32,
+//         emiss: glam::Vec3,
+//     ) -> MaterialGPU {
+//         MaterialGPU {
+//             color,
+//             roughness,
+//             metallic,
+//             ior,
+//             _pad: [0.0, 0.0],
+//             emiss,
+//             _pad2: 0.0,
+//         }
+//     }
+// }
+
+////////////////////////////////////////////
+/// V2 MATERIAL
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct MaterialGPU {
-    color: glam::Vec3,
-    roughness: f32,
-    metallic: f32,
-    _pad: [f32; 3],
+pub struct PBRMaterialGPU {
+    color_factor: glam::Vec4,
+    color: i32,
+
+    metal_rough: i32,
+    metal_factor: f32,
+    rough_factor: f32,
+
+    emiss_factor: glam::Vec4,
+    emiss: i32,
+
+    ior: f32,
+    _pad: [f32; 2],
 }
 
-impl MaterialGPU {
-    pub fn new(color: glam::Vec3, roughness: f32, metallic: f32) -> MaterialGPU {
-        MaterialGPU {
+impl PBRMaterialGPU {
+    pub fn new(
+        color_factor: glam::Vec4,
+        color: i32,
+
+        metal_rough: i32,
+        metal_factor: f32,
+        rough_factor: f32,
+
+        emiss_factor: glam::Vec4,
+        emiss: i32,
+
+        ior: f32,
+    ) -> PBRMaterialGPU {
+        PBRMaterialGPU {
+            color_factor,
             color,
-            roughness,
-            metallic,
-            _pad: [0.0, 0.0, 0.0],
+
+            metal_rough,
+            metal_factor,
+            rough_factor,
+
+            emiss_factor,
+            emiss,
+
+            ior,
+            _pad: [0.0, 0.0],
         }
     }
 }
-
-/*struct Material {
-    color: vec3f,
-    roughness: f32,
-    metallic: f32,
-}*/
