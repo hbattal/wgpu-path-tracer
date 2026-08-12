@@ -26,7 +26,7 @@ impl Scene {
         let mut world_mats: Vec<PBRMaterialGPU> = Vec::new();
 
         let (layout, group) = Scene::load_gltf(
-            "models/p3.glb",
+            "models/p3/scene.gltf",
             &mut world,
             &mut world_triangle,
             &mut world_mats,
@@ -307,22 +307,22 @@ impl Scene {
 
         //umm im just noticing that mipmaps make no sense in the context of a path tracer
         for sampler in document.samplers() {
-            use gltf::texture::MagFilter::{Linear, Nearest};
+            use gltf::texture::MagFilter;
             use gltf::texture::MinFilter;
-            use gltf::texture::WrappingMode::{ClampToEdge, MirroredRepeat, Repeat};
+            use gltf::texture::WrappingMode;
 
             let address_mode = |typ| match typ {
-                ClampToEdge => wgpu::AddressMode::ClampToEdge,
-                MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-                Repeat => wgpu::AddressMode::Repeat,
+                WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                WrappingMode::Repeat => wgpu::AddressMode::Repeat,
             };
 
             let address_mode_u = address_mode(sampler.wrap_s());
             let address_mode_v = address_mode(sampler.wrap_t());
 
             let mag_filter = match sampler.mag_filter() {
-                Some(Nearest) => wgpu::FilterMode::Nearest,
-                Some(Linear) => wgpu::FilterMode::Linear,
+                Some(MagFilter::Nearest) => wgpu::FilterMode::Nearest,
+                Some(MagFilter::Linear) => wgpu::FilterMode::Linear,
                 None => wgpu::FilterMode::Linear,
             };
 

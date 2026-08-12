@@ -166,13 +166,19 @@ impl State {
 
         //println!("{:?}", adapter.limits());
 
+        let mut limits = wgpu::Limits::defaults();
+
+        limits.max_binding_array_elements_per_shader_stage = 100;
+        limits.max_binding_array_sampler_elements_per_shader_stage = 100;
+        limits.max_bind_groups = 5;
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
                     | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                required_limits: adapter.limits(), //wgpu::Limits::defaults(),
+                required_limits: limits, //adapter.limits(), //wgpu::Limits::defaults(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
