@@ -164,6 +164,8 @@ impl State {
             })
             .await?;
 
+        //println!("{:?}", adapter.limits());
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,

@@ -111,18 +111,28 @@ struct Material {
     emiss_factor: vec4f,
     emiss: i32,
     ior: f32,
+
+    color_sampler: i32,
+    metal_rough_sampler: i32,
+    emiss_sampler: i32,
 }
 
 @group(4) @binding(0)
 var textures: binding_array<texture_2d<f32>>;
+@group(4) @binding(1)
+var samplers: binding_array<sampler>;
 
-//use a sampler?
-fn sample(ind: i32, uv: vec2f) -> vec4f {
-    let size = textureDimensions(textures[ind]);
-    let x = u32(fract(uv.x) * f32(size.x - 1));
-    let y = u32(fract(uv.y) * f32(size.y - 1));
+fn sample(ind: i32, smp_ind: i32, uv: vec2f) -> vec4f {
 
-    return textureLoad(textures[ind], vec2(x, y), 0);
+    if smp_ind == -1 {
+         let size = textureDimensions(textures[ind]);
+        let x = u32(fract(uv.x) * f32(size.x - 1));
+        let y = u32(fract(uv.y) * f32(size.y - 1));
+
+        return textureLoad(textures[ind], vec2(x, y), 0);
+    }
+
+    return textureSample(textures[ind], samplers[smp_ind], uv);
 }
 
 struct Sphere {
@@ -307,7 +317,7 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     var opacity = mat.color_factor.a;
 
     if mat.color >= 0 {
-        let smp = sample(mat.color, hit.uv);
+        let smp = sample(mat.color, mat.color_sampler, hit.uv);
         color *= smp.rgb;
         opacity *= smp.a;
     }
@@ -316,9 +326,9 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     var rough = mat.rough_factor;
 
     if mat.metal_rough >= 0 {
-        let s = sample(mat.metal_rough, hit.uv);
-        metal *= s.b;
-        rough *= s.g;
+        let smp = sample(mat.metal_rough, mat.metal_rough_sampler, hit.uv);
+        metal *= smp.b;
+        rough *= smp.g;
     }
 
     let roughness = clamp(rough, 0.03, 1.0); //if this is zero bad things happen (D becomes 0/0)
@@ -601,7 +611,7 @@ fn fs_main(in: output) -> @location(0) vec4f {
         var emiss = materials[closest.mat].emiss_factor.rgb;
 
         if materials[closest.mat].emiss >= 0 {
-            emiss *= sample(materials[closest.mat].emiss, closest.uv).rgb;
+            emiss *= sample(materials[closest.mat].emiss, materials[closest.mat].emiss_sampler, closest.uv).rgb;
         }
 
         cur += light * emiss;

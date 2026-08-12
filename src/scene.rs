@@ -26,7 +26,7 @@ impl Scene {
         let mut world_mats: Vec<PBRMaterialGPU> = Vec::new();
 
         let (layout, group) = Scene::load_gltf(
-            "models/p3/scene.gltf",
+            "models/p3.glb",
             &mut world,
             &mut world_triangle,
             &mut world_mats,
@@ -56,6 +56,9 @@ impl Scene {
             glam::Vec3::from_array([0.0, 0.0, 0.0]).extend(1.0),
             -1,
             0.0,
+            -1,
+            -1,
+            -1,
         ));
 
         world.push(Rc::new(Sphere::new(
@@ -92,6 +95,9 @@ impl Scene {
             glam::Vec3::from_array([4.0, 4.0, 4.0]).extend(1.0),
             -1,
             0.0,
+            -1,
+            -1,
+            -1,
         ));
 
         let root_bvh = BvhNode::new(world);
@@ -157,26 +163,52 @@ impl Scene {
 
             //println!("{:?}, and {:?}", mat.alpha_mode(), mat.alpha_cutoff());
 
-            let color = pbr
-                .base_color_texture()
-                .map_or(-1, |info| info.texture().source().index() as i32);
+            let mut color = -1;
+            let mut color_sampler = -1;
+
+            if let Some(info) = pbr.base_color_texture() {
+                color = info.texture().source().index() as i32;
+
+                color_sampler = info
+                    .texture()
+                    .sampler()
+                    .index()
+                    .map_or(-1, |ind| ind as i32);
+            }
 
             if color != -1 {
                 linear.insert(color, true);
             }
 
-            let metal_rough = pbr
-                .metallic_roughness_texture()
-                .map_or(-1, |info| info.texture().source().index() as i32);
+            let mut metal_rough = -1;
+            let mut metal_rough_sampler = -1;
 
-            if metal_rough != 1 {
+            if let Some(info) = pbr.metallic_roughness_texture() {
+                metal_rough = info.texture().source().index() as i32;
+
+                metal_rough_sampler = info
+                    .texture()
+                    .sampler()
+                    .index()
+                    .map_or(-1, |ind| ind as i32);
+            }
+
+            if metal_rough != -1 {
                 linear.insert(metal_rough, false);
             }
 
-            let emiss = mat
-                .emissive_texture()
-                .map_or(-1, |info| info.texture().source().index() as i32);
+            let mut emiss = -1;
+            let mut emiss_sampler = -1;
 
+            if let Some(info) = mat.emissive_texture() {
+                emiss = info.texture().source().index() as i32;
+
+                emiss_sampler = info
+                    .texture()
+                    .sampler()
+                    .index()
+                    .map_or(-1, |ind| ind as i32);
+            }
             if emiss != -1 {
                 linear.insert(emiss, true);
             }
@@ -192,10 +224,14 @@ impl Scene {
                 emiss_factor.extend(1.0),
                 emiss,
                 ior,
+                color_sampler,
+                metal_rough_sampler,
+                emiss_sampler,
             ));
         }
 
         let mut views: Vec<wgpu::TextureView> = Vec::new();
+        let mut samplers = Vec::new();
 
         for (ind, image) in images.iter().enumerate() {
             //do formating for 3 value images?
@@ -269,29 +305,84 @@ impl Scene {
             views.push(view);
         }
 
+        //umm im just noticing that mipmaps make no sense in the context of a path tracer
+        for sampler in document.samplers() {
+            use gltf::texture::MagFilter::{Linear, Nearest};
+            use gltf::texture::MinFilter;
+            use gltf::texture::WrappingMode::{ClampToEdge, MirroredRepeat, Repeat};
+
+            let address_mode = |typ| match typ {
+                ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                Repeat => wgpu::AddressMode::Repeat,
+            };
+
+            let address_mode_u = address_mode(sampler.wrap_s());
+            let address_mode_v = address_mode(sampler.wrap_t());
+
+            let mag_filter = match sampler.mag_filter() {
+                Some(Nearest) => wgpu::FilterMode::Nearest,
+                Some(Linear) => wgpu::FilterMode::Linear,
+                None => wgpu::FilterMode::Linear,
+            };
+
+            let min_filter = match sampler.min_filter() {
+                Some(MinFilter::Nearest) => wgpu::FilterMode::Nearest,
+                Some(MinFilter::NearestMipmapLinear) => wgpu::FilterMode::Nearest,
+                Some(MinFilter::NearestMipmapNearest) => wgpu::FilterMode::Nearest,
+                _ => wgpu::FilterMode::Linear,
+            };
+
+            let smp = device.create_sampler(&wgpu::SamplerDescriptor {
+                address_mode_u,
+                address_mode_v,
+                mag_filter,
+                min_filter,
+                ..Default::default()
+            });
+
+            samplers.push(smp);
+        }
+
         let tex_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    multisampled: false,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: std::num::NonZeroU32::new(views.len() as u32),
                 },
-                count: std::num::NonZeroU32::new(views.len() as u32),
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: std::num::NonZeroU32::new(samplers.len() as u32),
+                },
+            ],
         });
 
         let refs: Vec<_> = views.iter().collect();
+        let refs_s: Vec<_> = samplers.iter().collect();
 
         let tex_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &tex_bind_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureViewArray(&refs),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureViewArray(&refs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::SamplerArray(&refs_s),
+                },
+            ],
         });
 
         (tex_bind_layout, tex_bind)

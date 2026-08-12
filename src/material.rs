@@ -47,7 +47,12 @@ pub struct PBRMaterialGPU {
     emiss: i32,
 
     ior: f32,
-    _pad: [f32; 2],
+
+    color_sampler: i32,
+    metal_rough_sampler: i32,
+    emiss_sampler: i32,
+
+    _pad: [f32; 3],
 }
 
 impl PBRMaterialGPU {
@@ -63,6 +68,10 @@ impl PBRMaterialGPU {
         emiss: i32,
 
         ior: f32,
+
+        color_sampler: i32,
+        metal_rough_sampler: i32,
+        emiss_sampler: i32,
     ) -> PBRMaterialGPU {
         PBRMaterialGPU {
             color_factor,
@@ -76,7 +85,11 @@ impl PBRMaterialGPU {
             emiss,
 
             ior,
-            _pad: [0.0, 0.0],
+            color_sampler,
+            metal_rough_sampler,
+            emiss_sampler,
+
+            _pad: [0.0, 0.0, 0.0],
         }
     }
 }
