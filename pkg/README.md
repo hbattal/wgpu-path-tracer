@@ -14,7 +14,7 @@ Todos:
 - [x] BVH SAH sweep + data via storage buffer
 - [x] Cook-Torrance BRDF + importance sampling the NDF
 - [x] glTF model loading + material integration
-- [ ] Texture support for the web (Atlas?)
+- [x] Texture support for the web (Atlas?)
 - [ ] some sort of ui (egui), scenes, etc.
 - [ ] clean and restructure
 - [ ] upgrade it to a BSDF (read the paper + pbrtv4 9.3-9.7)
