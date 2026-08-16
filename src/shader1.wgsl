@@ -1,5 +1,3 @@
-enable wgpu_binding_array;
-
 struct input {
     @location(0) pos: vec3f,
     @location(1) uv: vec2f,
@@ -59,7 +57,7 @@ fn rand_f32() -> f32 {
   return bitcast<f32>(0x3f800000u | (xorshift32() >> 9u)) - 1.;
 }
 
-@group(1) @binding(0)
+@group(0) @binding(1)
 var<uniform> camera: Camera;
 
 struct Camera {
@@ -117,22 +115,28 @@ struct Material {
     emiss_sampler: i32,
 }
 
-@group(4) @binding(0)
-var textures: binding_array<texture_2d<f32>>;
-@group(4) @binding(1)
-var samplers: binding_array<sampler>;
+struct Bounds {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
+
+@group(3) @binding(0)
+var textures: texture_2d<f32>;
+@group(3) @binding(1)
+var<storage> bounds: array<Bounds>;
+
 
 fn sample(ind: i32, smp_ind: i32, uv: vec2f) -> vec4f {
+    let size = vec2(bounds[ind].w, bounds[ind].h);
+    let x = u32(fract(uv.x) * f32(size.x - 1));
+    let y = u32(fract(uv.y) * f32(size.y - 1));
 
-    if smp_ind == -1 {
-         let size = textureDimensions(textures[ind]);
-        let x = u32(fract(uv.x) * f32(size.x - 1));
-        let y = u32(fract(uv.y) * f32(size.y - 1));
+    let off_x = bounds[ind].x + x;
+    let off_y = bounds[ind].y + y;
 
-        return textureLoad(textures[ind], vec2(x, y), 0);
-    }
-
-    return textureSample(textures[ind], samplers[smp_ind], uv);
+    return textureLoad(textures, vec2(off_x, off_y), 0);
 }
 
 struct Sphere {
@@ -213,9 +217,9 @@ fn triangle_dirgen() {
 
 }
 
-@group(2) @binding(0)
+@group(1) @binding(0)
 var ping: texture_2d<f32>;
-@group(2) @binding(1)
+@group(1) @binding(1)
 var pong: texture_storage_2d<rgba32float, write>;
 
 struct BvhGPU {
@@ -226,10 +230,10 @@ struct BvhGPU {
     z: vec2f,
 }
 
-@group(3) @binding(0) var<storage> bvh: array<BvhGPU>;
-@group(3) @binding(1) var<storage> spheres: array<Sphere>;
-@group(3) @binding(2) var<storage> triangles: array<Triangle>;
-@group(3) @binding(3) var<storage> materials: array<Material>;
+@group(2) @binding(0) var<storage> bvh: array<BvhGPU>;
+@group(2) @binding(1) var<storage> spheres: array<Sphere>;
+@group(2) @binding(2) var<storage> triangles: array<Triangle>;
+@group(2) @binding(3) var<storage> materials: array<Material>;
 
 const PI = 3.141;
 const EPSILON = 1e-3;
@@ -301,6 +305,10 @@ fn schlick_vec(f0: vec3f, cost: f32) -> vec3f {
 fn schlick(f0: f32, cost: f32) -> f32 {
     let u = 1 - cost;
     return mix(f0, 1., u * u * u * u * u);
+}
+
+fn luminance(rgb: vec3f) -> f32 {
+    return dot(rgb, vec3(0.2126, 0.7152, 0.0722));
 }
 
 //microfacet BRDF + sampling the next dir

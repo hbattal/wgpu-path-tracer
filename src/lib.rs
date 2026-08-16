@@ -11,7 +11,7 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::EventLoopExtWebSys;
 
-use crate::scene::Scene;
+use crate::scene2::Scene;
 
 mod aabb;
 mod bvh;
@@ -19,7 +19,7 @@ mod camera;
 mod interval;
 mod material;
 mod object;
-mod scene;
+mod scene2;
 mod texture;
 
 #[repr(C)]
@@ -129,7 +129,6 @@ pub struct State {
     bvh_bind_group: wgpu::BindGroup,
 
     camera_uniform: CameraUniform,
-    camera_bind_group: wgpu::BindGroup,
     camera_buffer: wgpu::Buffer,
 
     images_group: wgpu::BindGroup,
@@ -166,17 +165,17 @@ impl State {
 
         //println!("{:?}", adapter.limits());
 
-        let mut limits = wgpu::Limits::defaults();
+        let limits = wgpu::Limits::defaults();
 
-        limits.max_binding_array_elements_per_shader_stage = 100;
-        limits.max_binding_array_sampler_elements_per_shader_stage = 100;
-        limits.max_bind_groups = 5;
+        // limits.max_binding_array_elements_per_shader_stage = 100;
+        // limits.max_binding_array_sampler_elements_per_shader_stage = 100;
+        //limits.max_texture_dimension_2d = 16384;
+        //limits.max_buffer_size = 2147483647;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                    | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                required_features: wgpu::Features::empty(), //wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 required_limits: limits, //adapter.limits(), //wgpu::Limits::defaults(),
                 memory_hints: Default::default(),
@@ -219,34 +218,6 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let settings_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-
-                label: Some("settings_layout"),
-            });
-
-        let settings_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &settings_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: settings_buffer.as_entire_binding(),
-            }],
-
-            label: Some("settings_group"),
-        });
-
-        //camera starts
-
         //[26.885092, 20.502254, 22.690096]
         let camera = camera::Camera::new(glam::vec3(26.88, 20.50, 22.69), 3.79, -0.43);
 
@@ -259,31 +230,77 @@ impl State {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group_layout =
+        let settings_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
 
-                label: Some("cam_layout"),
+                label: Some("settings_layout"),
             });
 
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
+        let settings_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &settings_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: settings_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+            ],
 
-            label: Some("cam_group"),
+            label: Some("settings_group"),
         });
+
+        //camera starts
+
+        // let camera_bind_group_layout =
+        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //         entries: &[wgpu::BindGroupLayoutEntry {
+        //             binding: 0,
+        //             visibility: wgpu::ShaderStages::FRAGMENT,
+        //             ty: wgpu::BindingType::Buffer {
+        //                 ty: wgpu::BufferBindingType::Uniform,
+        //                 has_dynamic_offset: false,
+        //                 min_binding_size: None,
+        //             },
+        //             count: None,
+        //         }],
+
+        //         label: Some("cam_layout"),
+        //     });
+
+        // let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     layout: &camera_bind_group_layout,
+        //     entries: &[wgpu::BindGroupEntry {
+        //         binding: 0,
+        //         resource: camera_buffer.as_entire_binding(),
+        //     }],
+
+        //     label: Some("cam_group"),
+        // });
 
         //camera ends
 
@@ -322,30 +339,35 @@ impl State {
 
         //BVH related stuff
 
+        //Scene::test_model(&device, &queue); //to save precomp
+
+        // let (bvh_cont, sphere_cont, triangle_cont, material_cont, images_layout, images_group) =
+        //     Scene::fast_model(&device, &queue);
+
         let (bvh_cont, sphere_cont, triangle_cont, material_cont, images_layout, images_group) =
             Scene::test_model(&device, &queue);
 
         let bvh_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("bvh_buf"),
-            contents: bytemuck::cast_slice(&bvh_cont),
+            contents: bytemuck::cast_slice(&bvh_cont), //bvh_cont,
             usage: wgpu::BufferUsages::STORAGE,
         });
 
         let sphere_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sphere_buf"),
-            contents: bytemuck::cast_slice(&sphere_cont),
+            contents: bytemuck::cast_slice(&sphere_cont), //sphere_cont,
             usage: wgpu::BufferUsages::STORAGE,
         });
 
         let triangle_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("triangle_buf"),
-            contents: bytemuck::cast_slice(&triangle_cont),
+            contents: bytemuck::cast_slice(&triangle_cont), //triangle_cont,
             usage: wgpu::BufferUsages::STORAGE,
         });
 
         let material_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("material_buf"),
-            contents: bytemuck::cast_slice(&material_cont),
+            contents: bytemuck::cast_slice(&material_cont), //material_cont,
             usage: wgpu::BufferUsages::STORAGE,
         });
 
@@ -420,13 +442,13 @@ impl State {
             label: Some("bvh_group"),
         });
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shader1.wgsl"));
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("layout"),
             bind_group_layouts: &[
                 Some(&settings_bind_group_layout),
-                Some(&camera_bind_group_layout),
+                //Some(&camera_bind_group_layout),
                 Some(&tex_bind_group_layout),
                 Some(&bvh_layout),
                 Some(&images_layout),
@@ -511,7 +533,6 @@ impl State {
 
             camera,
             camera_uniform,
-            camera_bind_group,
             camera_buffer,
 
             bvh_bind_group,
@@ -599,14 +620,13 @@ impl State {
         render_pass.set_pipeline(&self.pipeline);
 
         render_pass.set_bind_group(0, &self.settings_bind_group, &[]);
-        render_pass.set_bind_group(1, &self.camera_bind_group, &[]);
         render_pass.set_bind_group(
-            2,
+            1,
             &self.tex_bind_groups[(self.settings.frame % 2) as usize],
             &[],
         );
-        render_pass.set_bind_group(3, &self.bvh_bind_group, &[]);
-        render_pass.set_bind_group(4, &self.images_group, &[]);
+        render_pass.set_bind_group(2, &self.bvh_bind_group, &[]);
+        render_pass.set_bind_group(3, &self.images_group, &[]);
 
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);

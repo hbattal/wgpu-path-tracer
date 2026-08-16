@@ -17,10 +17,27 @@
           height: 100%;
           display: block;
       }
+
+      #credit {
+          position: fixed;
+          top: 0;
+          right: 0;
+          background: #000;
+          color: #fff;
+          font-size: 18px;
+          border: 2px solid #fff;
+      }
     </style>
   </head>
 
   <body>
+    <div id="credit">
+        <a href="https://sketchfab.com/3d-models/porsche-911-rauh-welt-free-0e1f5e1c0ddc4c3f88b8484461146a79" target="_blank">Porsche 911 RAUH-Welt</a>
+        by
+        <a href="https://sketchfab.com/autoNgraphic" target="_blank">autoNgraphic</a>
+        used under
+        <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank">CC BY 4.0</a>
+    </div>
     <canvas id="canvas"></canvas>
     <script type="module">
       import init from "./pkg/wgpu_tracer.js";
