@@ -4,6 +4,39 @@ use winit::{
 };
 
 //refactor this asap
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CameraUniform {
+    pos: glam::Vec4,
+    forward: glam::Vec4,
+    right: glam::Vec4,
+    up: glam::Vec4,
+    fov: f32,
+    _pad: [f32; 3],
+}
+
+impl CameraUniform {
+    pub fn new() -> Self {
+        Self {
+            pos: glam::vec4(0.0, 0.0, 0.0, 0.0),
+            forward: glam::vec4(0.0, 0.0, 0.0, 0.0),
+            right: glam::vec4(0.0, 0.0, 0.0, 0.0),
+            up: glam::vec4(0.0, 0.0, 0.0, 0.0),
+            fov: 45_f32.to_radians(),
+            _pad: [0., 0., 0.],
+        }
+    }
+
+    pub fn update(&mut self, camera: &Camera) {
+        self.pos = camera.pos.extend(1.0);
+        self.forward = camera.front.extend(1.0);
+        self.right = camera.rght.extend(1.0);
+        self.up = camera.actual_up.extend(1.0);
+
+        self.fov = camera.fov;
+    }
+}
 pub struct Camera {
     pub pos: glam::Vec3,
     pub front: glam::Vec3,

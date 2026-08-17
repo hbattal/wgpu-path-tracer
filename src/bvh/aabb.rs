@@ -1,4 +1,4 @@
-use crate::interval::*;
+use super::interval::*;
 
 #[derive(Copy, Clone, Debug)]
 pub struct AABB {

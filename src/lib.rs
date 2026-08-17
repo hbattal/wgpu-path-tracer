@@ -11,16 +11,13 @@ use wasm_bindgen::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use winit::platform::web::EventLoopExtWebSys;
 
-use crate::scene2::Scene;
+use crate::camera::*;
+use crate::scene::Scene;
 
-mod aabb;
 mod bvh;
 mod camera;
-mod interval;
-mod material;
 mod object;
-mod scene2;
-mod texture;
+mod scene;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -62,39 +59,6 @@ impl Vertex {
 }
 
 const INDICES: &[u16] = &[0, 1, 3, 1, 2, 3];
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct CameraUniform {
-    pos: glam::Vec4,
-    forward: glam::Vec4,
-    right: glam::Vec4,
-    up: glam::Vec4,
-    fov: f32,
-    _pad: [f32; 3],
-}
-
-impl CameraUniform {
-    fn new() -> Self {
-        Self {
-            pos: glam::vec4(0.0, 0.0, 0.0, 0.0),
-            forward: glam::vec4(0.0, 0.0, 0.0, 0.0),
-            right: glam::vec4(0.0, 0.0, 0.0, 0.0),
-            up: glam::vec4(0.0, 0.0, 0.0, 0.0),
-            fov: 45_f32.to_radians(),
-            _pad: [0., 0., 0.],
-        }
-    }
-
-    fn update(&mut self, camera: &camera::Camera) {
-        self.pos = camera.pos.extend(1.0);
-        self.forward = camera.front.extend(1.0);
-        self.right = camera.rght.extend(1.0);
-        self.up = camera.actual_up.extend(1.0);
-
-        self.fov = camera.fov;
-    }
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -165,19 +129,27 @@ impl State {
 
         //println!("{:?}", adapter.limits());
 
-        let limits = wgpu::Limits::defaults();
+        let mut limits = wgpu::Limits::defaults();
+        let mut required_features = wgpu::Features::empty();
 
-        // limits.max_binding_array_elements_per_shader_stage = 100;
-        // limits.max_binding_array_sampler_elements_per_shader_stage = 100;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            limits.max_binding_array_elements_per_shader_stage = 100;
+            limits.max_binding_array_sampler_elements_per_shader_stage = 100;
+
+            required_features = wgpu::Features::TEXTURE_BINDING_ARRAY
+                | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+        }
+
         //limits.max_texture_dimension_2d = 16384;
         //limits.max_buffer_size = 2147483647;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(), //wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                required_features,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                required_limits: limits, //adapter.limits(), //wgpu::Limits::defaults(),
+                required_limits: limits,
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
@@ -255,7 +227,7 @@ impl State {
                     },
                 ],
 
-                label: Some("settings_layout"),
+                label: Some("settings_cam_layout"),
             });
 
         let settings_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -271,38 +243,8 @@ impl State {
                 },
             ],
 
-            label: Some("settings_group"),
+            label: Some("settings_cam_group"),
         });
-
-        //camera starts
-
-        // let camera_bind_group_layout =
-        //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        //         entries: &[wgpu::BindGroupLayoutEntry {
-        //             binding: 0,
-        //             visibility: wgpu::ShaderStages::FRAGMENT,
-        //             ty: wgpu::BindingType::Buffer {
-        //                 ty: wgpu::BufferBindingType::Uniform,
-        //                 has_dynamic_offset: false,
-        //                 min_binding_size: None,
-        //             },
-        //             count: None,
-        //         }],
-
-        //         label: Some("cam_layout"),
-        //     });
-
-        // let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        //     layout: &camera_bind_group_layout,
-        //     entries: &[wgpu::BindGroupEntry {
-        //         binding: 0,
-        //         resource: camera_buffer.as_entire_binding(),
-        //     }],
-
-        //     label: Some("cam_group"),
-        // });
-
-        //camera ends
 
         //PING PONG
 
@@ -336,13 +278,6 @@ impl State {
         let tex_bind_groups = temp(&device, &config, &tex_bind_group_layout);
 
         //PING PoNG
-
-        //BVH related stuff
-
-        //Scene::test_model(&device, &queue); //to save precomp
-
-        // let (bvh_cont, sphere_cont, triangle_cont, material_cont, images_layout, images_group) =
-        //     Scene::fast_model(&device, &queue);
 
         let (bvh_cont, sphere_cont, triangle_cont, material_cont, images_layout, images_group) =
             Scene::test_model(&device, &queue);
@@ -442,7 +377,17 @@ impl State {
             label: Some("bvh_group"),
         });
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader1.wgsl"));
+        let shader;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            shader = device.create_shader_module(wgpu::include_wgsl!("shaders/native.wgsl"));
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            shader = device.create_shader_module(wgpu::include_wgsl!("shaders/web.wgsl"));
+        }
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("layout"),

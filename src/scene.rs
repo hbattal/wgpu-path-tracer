@@ -1,10 +1,29 @@
-use crate::bvh::*;
-use crate::material::PBRMaterialGPU;
+use guillotiere::{AtlasAllocator, size2};
+use include_bytes_aligned::include_bytes_aligned;
+use wgpu::util::DeviceExt;
+
+use crate::bvh::builder::*;
 use crate::object::*;
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 
 pub struct Scene {}
+
+struct Vertex {
+    pos: glam::Vec3,
+    normal: glam::Vec3,
+    uv: glam::Vec2,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Bounds {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+}
 
 impl Scene {
     pub fn test_model(
@@ -19,14 +38,15 @@ impl Scene {
         wgpu::BindGroup,
     ) {
         let mut world: Vec<Rc<dyn Hittable>> = Vec::new();
-        let mut linear: Vec<BvhGPU> = Vec::new();
 
         let mut world_spheres: Vec<SphereGPU> = Vec::new();
         let mut world_triangle: Vec<TriangleGPU> = Vec::new();
         let mut world_mats: Vec<PBRMaterialGPU> = Vec::new();
 
+        let bytes = include_bytes!("../models/p6.glb");
+
         let (layout, group) = Scene::load_gltf(
-            "models/p3/scene.gltf",
+            bytes,
             &mut world,
             &mut world_triangle,
             &mut world_mats,
@@ -100,8 +120,17 @@ impl Scene {
             -1,
         ));
 
-        let root_bvh = BvhNode::new(world);
-        root_bvh.shader_format(&mut linear);
+        let p = Path::new("precomp/bvh");
+        let mut linear: Vec<BvhGPU> = Vec::new();
+
+        if p.exists() || cfg!(target_arch = "wasm32") {
+            let bytes_linear = include_bytes_aligned!(16, "../precomp/bvh");
+            linear = bytemuck::cast_slice(bytes_linear).to_vec();
+        } else {
+            let root_bvh = BvhNode::new(world);
+            root_bvh.shader_format(&mut linear);
+            let _ = std::fs::write("precomp/bvh", bytemuck::cast_slice(&linear));
+        }
 
         println!("ended");
 
@@ -120,29 +149,33 @@ impl Scene {
 
     //GLTF TODO:
 
-    //samplers
+    //samplers, done?
     //textures in web, binding array is not supported
     //error handling
     //proper image formats
+    //add back the binding array for native
 
     //resources (bevy is good)
     //https://github.com/bevyengine/bevy/blob/e8b3598ff5e5ec40e8ba84edd5750a1c0e4d4e59/crates/bevy_image/src/image_texture_conversion.rs#L9
     //https://github.com/bevyengine/bevy/blob/main/crates/bevy_gltf/src/loader/gltf_ext/mod.rs#L46
 
-    pub fn load_gltf(
-        path: &str,
+    fn load_gltf(
+        bytes: &[u8],
         world: &mut Vec<Rc<dyn Hittable>>,
         world_triangle: &mut Vec<TriangleGPU>,
         world_mats: &mut Vec<PBRMaterialGPU>,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> (wgpu::BindGroupLayout, wgpu::BindGroup) {
-        let (document, buffers, images) = gltf::import(path).unwrap();
+        let (document, buffers, images) = gltf::import_slice(bytes).unwrap();
 
         println!("{:?}", document.extensions_used());
         println!("{:?}", document.extensions_required());
 
-        let init = glam::Mat4::from_scale(glam::Vec3::splat(1000.)); //idk why some models do this
+        let s = glam::Mat4::from_scale(glam::Vec3::splat(10.));
+        let t = glam::Mat4::from_translation(glam::Vec3::new(0., 6.2, 0.));
+
+        let init = t * s; //idk why some models do this
 
         for scene in document.scenes() {
             for node in scene.nodes() {
@@ -230,165 +263,319 @@ impl Scene {
             ));
         }
 
-        let mut views: Vec<wgpu::TextureView> = Vec::new();
-        let mut samplers = Vec::new();
+        //either atlas or binding_array
 
-        for (ind, image) in images.iter().enumerate() {
-            //do formating for 3 value images?
+        let tex_bind_layout;
+        let tex_bind;
 
-            //println!("{} and {}", image.width, image.height);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut views: Vec<wgpu::TextureView> = Vec::new();
+            let mut samplers = Vec::new();
+
+            for (ind, image) in images.iter().enumerate() {
+                //do formating for 3 value images?
+
+                //println!("{} and {}", image.width, image.height);
+
+                let size = wgpu::Extent3d {
+                    width: image.width,
+                    height: image.height,
+                    depth_or_array_layers: 1,
+                };
+
+                //println!("{:?}", image.format);
+
+                let mut data = Vec::new();
+
+                //I dont understand why we have r8? if i use  wgpu::TextureFormat::R8Unorm then the gpu needs to do something different or I fix it here? wtf?
+                match image.format {
+                    gltf::image::Format::R8 => {
+                        for &i in &image.pixels {
+                            data.extend_from_slice(&[i, i, i, 255]);
+                        }
+                    }
+
+                    gltf::image::Format::R8G8B8 => {
+                        for i in image.pixels.chunks(3) {
+                            data.extend_from_slice(&[i[0], i[1], i[2], 255]);
+                        }
+                    }
+
+                    //https://docs.rs/image/latest/src/image/color.rs.html#740
+                    gltf::image::Format::R8G8 => {
+                        for i in image.pixels.chunks(2) {
+                            data.extend_from_slice(&[i[0], i[0], i[0], i[1]]);
+                        }
+                    }
+
+                    gltf::image::Format::R8G8B8A8 => {
+                        data = image.pixels.clone();
+                    }
+                    _ => todo!(),
+                }
+
+                let format = if let Some(true) = linear.get(&(ind as i32)) {
+                    wgpu::TextureFormat::Rgba8UnormSrgb
+                } else {
+                    wgpu::TextureFormat::Rgba8Unorm
+                };
+
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    label: None,
+                    view_formats: &[],
+                });
+
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * image.width),
+                        rows_per_image: Some(image.height),
+                    },
+                    size,
+                );
+
+                let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                views.push(view);
+            }
+
+            //umm im just noticing that mipmaps make no sense in the context of a path tracer
+            for sampler in document.samplers() {
+                use gltf::texture::MagFilter::{Linear, Nearest};
+                use gltf::texture::MinFilter;
+                use gltf::texture::WrappingMode::{ClampToEdge, MirroredRepeat, Repeat};
+
+                let address_mode = |typ| match typ {
+                    ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                    MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                    Repeat => wgpu::AddressMode::Repeat,
+                };
+
+                let address_mode_u = address_mode(sampler.wrap_s());
+                let address_mode_v = address_mode(sampler.wrap_t());
+
+                let mag_filter = match sampler.mag_filter() {
+                    Some(Nearest) => wgpu::FilterMode::Nearest,
+                    Some(Linear) => wgpu::FilterMode::Linear,
+                    None => wgpu::FilterMode::Linear,
+                };
+
+                let min_filter = match sampler.min_filter() {
+                    Some(MinFilter::Nearest) => wgpu::FilterMode::Nearest,
+                    Some(MinFilter::NearestMipmapLinear) => wgpu::FilterMode::Nearest,
+                    Some(MinFilter::NearestMipmapNearest) => wgpu::FilterMode::Nearest,
+                    _ => wgpu::FilterMode::Linear,
+                };
+
+                let smp = device.create_sampler(&wgpu::SamplerDescriptor {
+                    address_mode_u,
+                    address_mode_v,
+                    mag_filter,
+                    min_filter,
+                    ..Default::default()
+                });
+
+                samplers.push(smp);
+            }
+
+            tex_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: std::num::NonZeroU32::new(views.len() as u32),
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: std::num::NonZeroU32::new(samplers.len() as u32),
+                    },
+                ],
+            });
+
+            let refs: Vec<_> = views.iter().collect();
+            let refs_s: Vec<_> = samplers.iter().collect();
+
+            tex_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &tex_bind_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureViewArray(&refs),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::SamplerArray(&refs_s),
+                    },
+                ],
+            });
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let mut atlas = AtlasAllocator::new(size2(8192, 8192));
+            let mut bounds: Vec<Bounds> = Vec::new();
 
             let size = wgpu::Extent3d {
-                width: image.width,
-                height: image.height,
+                width: 8192,
+                height: 8192,
                 depth_or_array_layers: 1,
             };
 
-            //println!("{:?}", image.format);
-
-            let mut data = Vec::new();
-
-            //I dont understand why we have r8? if i use  wgpu::TextureFormat::R8Unorm then the gpu needs to do something different or I fix it here? wtf?
-            match image.format {
-                gltf::image::Format::R8 => {
-                    for &i in &image.pixels {
-                        data.extend_from_slice(&[i, i, i, 255]);
-                    }
-                }
-
-                gltf::image::Format::R8G8B8 => {
-                    for i in image.pixels.chunks(3) {
-                        data.extend_from_slice(&[i[0], i[1], i[2], 255]);
-                    }
-                }
-
-                gltf::image::Format::R8G8B8A8 => {
-                    data = image.pixels.clone();
-                }
-                _ => todo!(),
-            }
-
-            let format = if let Some(true) = linear.get(&(ind as i32)) {
-                wgpu::TextureFormat::Rgba8UnormSrgb
-            } else {
-                wgpu::TextureFormat::Rgba8Unorm
-            };
-
-            let tex = device.create_texture(&wgpu::TextureDescriptor {
+            let tex: wgpu::Texture = device.create_texture(&wgpu::TextureDescriptor {
                 size,
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 label: None,
                 view_formats: &[],
             });
 
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &tex,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &data,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * image.width),
-                    rows_per_image: Some(image.height),
-                },
-                size,
-            );
+            for (_ind, image) in images.iter().enumerate() {
+                let a = atlas
+                    .allocate(size2(image.width as i32, image.height as i32))
+                    .unwrap();
+
+                println!("{:?}", a);
+
+                bounds.push(Bounds {
+                    x: a.rectangle.min.x as u32,
+                    y: a.rectangle.min.y as u32,
+                    w: a.rectangle.width() as u32,
+                    h: a.rectangle.height() as u32,
+                });
+
+                let mut data = Vec::new();
+
+                match image.format {
+                    gltf::image::Format::R8 => {
+                        for &i in &image.pixels {
+                            data.extend_from_slice(&[i, i, i, 255]);
+                        }
+                    }
+
+                    gltf::image::Format::R8G8B8 => {
+                        for i in image.pixels.chunks(3) {
+                            data.extend_from_slice(&[i[0], i[1], i[2], 255]);
+                        }
+                    }
+
+                    //https://docs.rs/image/latest/src/image/color.rs.html#740
+                    gltf::image::Format::R8G8 => {
+                        for i in image.pixels.chunks(2) {
+                            data.extend_from_slice(&[i[0], i[0], i[0], i[1]]);
+                        }
+                    }
+
+                    gltf::image::Format::R8G8B8A8 => {
+                        data = image.pixels.clone();
+                    }
+                    _ => todo!(),
+                }
+
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &tex,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d {
+                            x: a.rectangle.min.x as u32,
+                            y: a.rectangle.min.y as u32,
+                            z: 0,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    &data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * image.width),
+                        rows_per_image: Some(image.height),
+                    },
+                    wgpu::Extent3d {
+                        width: image.width,
+                        height: image.height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
 
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-            views.push(view);
-        }
 
-        //umm im just noticing that mipmaps make no sense in the context of a path tracer
-        for sampler in document.samplers() {
-            use gltf::texture::MagFilter;
-            use gltf::texture::MinFilter;
-            use gltf::texture::WrappingMode;
-
-            let address_mode = |typ| match typ {
-                WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
-                WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-                WrappingMode::Repeat => wgpu::AddressMode::Repeat,
-            };
-
-            let address_mode_u = address_mode(sampler.wrap_s());
-            let address_mode_v = address_mode(sampler.wrap_t());
-
-            let mag_filter = match sampler.mag_filter() {
-                Some(MagFilter::Nearest) => wgpu::FilterMode::Nearest,
-                Some(MagFilter::Linear) => wgpu::FilterMode::Linear,
-                None => wgpu::FilterMode::Linear,
-            };
-
-            let min_filter = match sampler.min_filter() {
-                Some(MinFilter::Nearest) => wgpu::FilterMode::Nearest,
-                Some(MinFilter::NearestMipmapLinear) => wgpu::FilterMode::Nearest,
-                Some(MinFilter::NearestMipmapNearest) => wgpu::FilterMode::Nearest,
-                _ => wgpu::FilterMode::Linear,
-            };
-
-            let smp = device.create_sampler(&wgpu::SamplerDescriptor {
-                address_mode_u,
-                address_mode_v,
-                mag_filter,
-                min_filter,
-                ..Default::default()
+            tex_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: None,
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
             });
 
-            samplers.push(smp);
-        }
+            let bounds_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("sphere_buf"),
+                contents: bytemuck::cast_slice(&bounds),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
-        let tex_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            tex_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &tex_bind_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
                     },
-                    count: std::num::NonZeroU32::new(views.len() as u32),
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: std::num::NonZeroU32::new(samplers.len() as u32),
-                },
-            ],
-        });
-
-        let refs: Vec<_> = views.iter().collect();
-        let refs_s: Vec<_> = samplers.iter().collect();
-
-        let tex_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &tex_bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&refs),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::SamplerArray(&refs_s),
-                },
-            ],
-        });
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: bounds_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+        }
 
         (tex_bind_layout, tex_bind)
     }
 
-    pub fn node(
+    fn node(
         node: gltf::Node,
         parent: glam::Mat4,
         buffers: &Vec<gltf::buffer::Data>,
@@ -455,10 +642,4 @@ impl Scene {
             Scene::node(child, matr, &buffers, world, world_triangle);
         }
     }
-}
-
-pub struct Vertex {
-    pos: glam::Vec3,
-    normal: glam::Vec3,
-    uv: glam::Vec2,
 }

@@ -1,0 +1,1 @@
+For now both files are identical other than textures, but since binding_array is native only it needs separation. I need to look into better ways of including different logic without having the entire thing repeated.

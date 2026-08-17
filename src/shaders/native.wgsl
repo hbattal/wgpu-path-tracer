@@ -59,7 +59,7 @@ fn rand_f32() -> f32 {
   return bitcast<f32>(0x3f800000u | (xorshift32() >> 9u)) - 1.;
 }
 
-@group(1) @binding(0)
+@group(0) @binding(1)
 var<uniform> camera: Camera;
 
 struct Camera {
@@ -117,9 +117,9 @@ struct Material {
     emiss_sampler: i32,
 }
 
-@group(4) @binding(0)
+@group(3) @binding(0)
 var textures: binding_array<texture_2d<f32>>;
-@group(4) @binding(1)
+@group(3) @binding(1)
 var samplers: binding_array<sampler>;
 
 fn sample(ind: i32, smp_ind: i32, uv: vec2f) -> vec4f {
@@ -213,9 +213,9 @@ fn triangle_dirgen() {
 
 }
 
-@group(2) @binding(0)
+@group(1) @binding(0)
 var ping: texture_2d<f32>;
-@group(2) @binding(1)
+@group(1) @binding(1)
 var pong: texture_storage_2d<rgba32float, write>;
 
 struct BvhGPU {
@@ -226,10 +226,10 @@ struct BvhGPU {
     z: vec2f,
 }
 
-@group(3) @binding(0) var<storage> bvh: array<BvhGPU>;
-@group(3) @binding(1) var<storage> spheres: array<Sphere>;
-@group(3) @binding(2) var<storage> triangles: array<Triangle>;
-@group(3) @binding(3) var<storage> materials: array<Material>;
+@group(2) @binding(0) var<storage> bvh: array<BvhGPU>;
+@group(2) @binding(1) var<storage> spheres: array<Sphere>;
+@group(2) @binding(2) var<storage> triangles: array<Triangle>;
+@group(2) @binding(3) var<storage> materials: array<Material>;
 
 const PI = 3.141;
 const EPSILON = 1e-3;

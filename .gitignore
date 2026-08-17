@@ -1,6 +1,7 @@
 /target
 /dist
 /precomp
+/archive
 /models
 /node_modules
 .vscode

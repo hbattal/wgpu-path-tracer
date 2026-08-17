@@ -1,6 +1,67 @@
-use crate::aabb::*;
-use crate::bvh::BvhGPU;
-use crate::interval::*;
+use crate::bvh::aabb::*;
+use crate::bvh::builder::*;
+use crate::bvh::interval::*;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct PBRMaterialGPU {
+    color_factor: glam::Vec4,
+    color: i32,
+
+    metal_rough: i32,
+    metal_factor: f32,
+    rough_factor: f32,
+
+    emiss_factor: glam::Vec4,
+    emiss: i32,
+
+    ior: f32,
+
+    color_sampler: i32,
+    metal_rough_sampler: i32,
+    emiss_sampler: i32,
+
+    _pad: [f32; 3],
+}
+
+impl PBRMaterialGPU {
+    pub fn new(
+        color_factor: glam::Vec4,
+        color: i32,
+
+        metal_rough: i32,
+        metal_factor: f32,
+        rough_factor: f32,
+
+        emiss_factor: glam::Vec4,
+        emiss: i32,
+
+        ior: f32,
+
+        color_sampler: i32,
+        metal_rough_sampler: i32,
+        emiss_sampler: i32,
+    ) -> PBRMaterialGPU {
+        PBRMaterialGPU {
+            color_factor,
+            color,
+
+            metal_rough,
+            metal_factor,
+            rough_factor,
+
+            emiss_factor,
+            emiss,
+
+            ior,
+            color_sampler,
+            metal_rough_sampler,
+            emiss_sampler,
+
+            _pad: [0.0, 0.0, 0.0],
+        }
+    }
+}
 
 pub trait Hittable {
     fn bounding_box(&self) -> AABB;
