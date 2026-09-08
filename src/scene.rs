@@ -43,7 +43,7 @@ impl Scene {
         let mut world_triangle: Vec<TriangleGPU> = Vec::new();
         let mut world_mats: Vec<PBRMaterialGPU> = Vec::new();
 
-        let bytes = include_bytes!("../models/p6.glb");
+        let bytes = include_bytes!("../models/dragon.glb");
 
         let (layout, group) = Scene::load_gltf(
             bytes,
@@ -76,6 +76,12 @@ impl Scene {
             glam::Vec3::from_array([0.0, 0.0, 0.0]).extend(1.0),
             -1,
             0.0,
+            0.0,
+            -1,
+            glam::vec4(1.0, 1.0, 1.0, 1.0),
+            3.4e+38,
+            0.0,
+            -1,
             -1,
             -1,
             -1,
@@ -115,6 +121,12 @@ impl Scene {
             glam::Vec3::from_array([4.0, 4.0, 4.0]).extend(1.0),
             -1,
             0.0,
+            0.0,
+            -1,
+            glam::vec4(1.0, 1.0, 1.0, 1.0),
+            3.4e+38,
+            0.0,
+            -1,
             -1,
             -1,
             -1,
@@ -144,16 +156,15 @@ impl Scene {
         )
     }
 
-    //currently no error handling at all
-    //https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html
+    //https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc (website is outdated)
 
     //GLTF TODO:
 
-    //samplers, done?
-    //textures in web, binding array is not supported
+    //samplers, done
+    //textures in web, binding array is not supported, done
+
     //error handling
     //proper image formats
-    //add back the binding array for native
 
     //resources (bevy is good)
     //https://github.com/bevyengine/bevy/blob/e8b3598ff5e5ec40e8ba84edd5750a1c0e4d4e59/crates/bevy_image/src/image_texture_conversion.rs#L9
@@ -248,6 +259,36 @@ impl Scene {
 
             let ior = mat.ior().map_or(1.5, |ior| ior);
 
+            let mut tran_factor = 0.0;
+            let mut tran = -1;
+            let mut tran_sampler = -1;
+
+            if let Some(trans) = mat.transmission() {
+                tran_factor = trans.transmission_factor();
+                tran = trans
+                    .transmission_texture()
+                    .map_or(-1, |info| info.texture().source().index() as i32);
+                tran_sampler = trans.transmission_texture().map_or(-1, |info| {
+                    info.texture()
+                        .sampler()
+                        .index()
+                        .map_or(-1, |ind| ind as i32)
+                });
+            }
+
+            let mut thick_factor = 0.0;
+            let mut atten_dist = 3.4e+38;
+            let mut atten_color = glam::vec3(1., 1., 1.);
+
+            if let Some(volume) = mat.volume() {
+                thick_factor = volume.thickness_factor();
+                atten_dist = volume.attenuation_distance();
+                atten_color = glam::Vec3::from_array(volume.attenuation_color());
+            }
+
+            //println!("{:?}", trans);
+            //mat.volume().unwrap().
+
             world_mats.push(PBRMaterialGPU::new(
                 glam::Vec4::from_array(color_factor),
                 color,
@@ -257,9 +298,15 @@ impl Scene {
                 emiss_factor.extend(1.0),
                 emiss,
                 ior,
+                tran_factor,
+                tran,
+                atten_color.extend(1.0),
+                atten_dist,
+                thick_factor,
                 color_sampler,
                 metal_rough_sampler,
                 emiss_sampler,
+                tran_sampler,
             ));
         }
 
