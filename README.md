@@ -20,7 +20,7 @@ Todos:
 - [ ] some sort of ui (egui), scenes, etc.
 - [ ] clean and restructure
 - [x] upgrade it to a BSDF (read 2007 Walter)
-- [ ] VNDF
+- [x] VNDF (read 2018 Heitz)
 - [ ] Finish pbrt
 - [ ] Document all the math under notes/
 
@@ -50,7 +50,7 @@ Anyways, resources in no particular order:
 
 Future reads:
 - https://jcgt.org/published/0003/02/03/paper.pdf
-- https://jcgt.org/published/0007/04/01/paper.pdf -> VNDF
 
 Implemented:
 - https://www.cs.cornell.edu/~srm/publications/EGSR07-btdf.pdf
+- https://jcgt.org/published/0007/04/01/paper.pdf

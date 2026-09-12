@@ -192,12 +192,9 @@ fn sphere_dirgen(s: Sphere, orig: vec3f, normal: vec3f) -> vec3f {
     let local = vec3(x, y, z);
 
     dir = normalize(dir);
+    let tbn = tbn(dir);
 
-    let a = select(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), abs(dir.z) > 0.9);
-    let u = normalize(cross(dir, a));
-    let v = normalize(cross(dir, u));
-
-    return normalize(u * local.x + v * local.y + dir * local.z);
+    return normalize(tbn * local);
 }
 
 struct Triangle {
@@ -250,7 +247,7 @@ fn Trowbridge_Reitz_GGX(a2: f32, ndoth: f32) -> f32 {
 }
 
 //see derivation in notes
-fn sample_microfacet_normal(a2: f32, normal: vec3f) -> vec3f {
+fn sample_ndf(a2: f32, normal: vec3f) -> vec3f {
     let e1 = rand_f32();
     let e2 = rand_f32();
 
@@ -260,35 +257,54 @@ fn sample_microfacet_normal(a2: f32, normal: vec3f) -> vec3f {
 
     let norm_tangent = vec3(sint * cos(phi), sint * sin(phi), cost);
 
+    let tbn = tbn(normal);
+
+    return normalize(tbn * norm_tangent);
+}
+
+fn sample_vndf(view: vec3f, alpha: f32, normal: vec3f) -> vec3f {
+
+    //first transform view into this space
+    let tbn = tbn(normal);
+    let vl = view * tbn;
+
+    let vh = normalize(vec3(vl.x * alpha, vl.y * alpha, vl.z));
+    let lensq = vh.x * vh.x + vh.y * vh.y;
+
+    let T1 = select(vec3(1, 0, 0), vec3(-vh.y, vh.x, 0) * inverseSqrt(lensq), lensq > 0);
+    let T2 = cross(vh, T1);
+
+    let e1 = rand_f32();
+    let e2 = rand_f32();
+
+    let r = sqrt(e1);
+    let phi = 2 * PI * e2;
+
+    let t1 = r * cos(phi);
+    let t2 = r * sin(phi);
+
+    let s = 0.5 * (1 + vh.z);
+    let t2i = (1 - s) * sqrt(1 - t1 * t1) + s * t2;
+
+    let nh = t1 * T1 + t2i * T2 + sqrt(max(1 - t1 * t1 - t2i * t2i, 0.0)) * vh;
+    let ne = normalize(vec3(nh.x * alpha, nh.y * alpha, max(nh.z, 0.0)));
+
+    return tbn * ne;
+}
+
+//isotropic, doesnt matter
+fn tbn(normal: vec3f) -> mat3x3f {
     let a = select(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), abs(normal.z) > 0.9);
     let u = normalize(cross(normal, a));
     let v = normalize(cross(normal, u));
 
-    //isotropic doesnt matter
-    return normalize(u * norm_tangent.x + v * norm_tangent.y + normal * norm_tangent.z);
+    return mat3x3f(u, v, normal);
 }
 
-//geomerty functions - I've seen this in three forms
-//1 Smith - SchlickGGX
-fn Smith_Schlick_GGX(ndotv: f32, ndotl: f32, roughness: f32) -> f32{
-    let r = roughness + 1.0;
-    let k = (r * r) / 8.0;
-
-    let schlick_ggx1 = ndotv / (ndotv * (1.0 - k) + k);
-    let schlick_ggx2 = ndotl / (ndotl * (1.0 - k) + k);
-
-    return schlick_ggx1 * schlick_ggx2;
+fn Smith_GGX_G1(a2: f32, ndotx: f32) -> f32 {
+    return 2.0 * ndotx / (ndotx + sqrt(a2 + (1.0 - a2) * ndotx * ndotx));
 }
 
-//2 SmithGGX
-fn Smith_GGX(a2: f32, ndotv: f32, ndotl: f32) -> f32 {
-    let l = 2.0 * ndotl / (ndotl + sqrt(a2 + (1.0 - a2) * ndotl * ndotl));
-    let v = 2.0 * ndotv / (ndotv + sqrt(a2 + (1.0 - a2) * ndotv * ndotv));
-
-    return l * v;
-}
-
-//3 HeightCorrelatedSmithGGX
 fn Height_Correlated_Smith_GGX(a2: f32, ndotv: f32, ndotl: f32) -> f32 {
     let lv = ndotv * sqrt(a2 + (1.0 - a2) * ndotl * ndotl);
     let vl = ndotl * sqrt(a2 + (1.0 - a2) * ndotv * ndotv);
@@ -300,7 +316,6 @@ fn Height_Correlated_Smith_GGX(a2: f32, ndotv: f32, ndotl: f32) -> f32 {
 fn f0(ior: f32) -> f32 {
     return ((ior - 1.) / (ior + 1)) * ((ior - 1.) / (ior + 1));
 }
-
 
 fn fresnel(f0: vec3f, cost: f32, ratio: f32) -> vec3f {
     var cos = cost;
@@ -390,7 +405,7 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
 
     let rest = 1.0 - tran_weight;
 
-    let spec_weight = rest * 0.5; //1.0 / 3.0;//1 - roughness;//luminance(f);
+    let spec_weight = rest * 0.5;
     let diff_weight = rest * 0.2;
     let light_weight = rest * 0.3;
     let chance = rand_f32();
@@ -402,7 +417,8 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     if chance < tran_weight {
         //TIR? 0.0 atten | tran is 0? 0.0 atten
         above = false;
-        h = sample_microfacet_normal(a2, normal);
+        h = sample_vndf(-inc, a, normal);
+        //h = sample_ndf(a2, normal);
 
         //now it matters if the material actually has volume or not given by thick_factor
         //thick_factor > 0 we actually refract this time
@@ -418,13 +434,14 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     }
 
     else if chance < spec_weight + tran_weight {
-        h = sample_microfacet_normal(a2, normal);
+        h = sample_vndf(-inc, a, normal);
+        //h = sample_ndf(a2, normal);
         scattered = normalize(reflect(inc, h));
     } else  if chance < spec_weight + diff_weight + tran_weight {
         scattered = normalize(normal + ssp());
         h = normalize(-inc + scattered);
     } else {
-        scattered = sphere_dirgen(spheres[1], origin, normal);
+        scattered = sphere_dirgen(spheres[2], origin, normal);
         h = normalize(-inc + scattered);
     }
 
@@ -450,22 +467,23 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
         let metal_fresnel = fresnel(color, vdoth, ratio);
 
         let D = Trowbridge_Reitz_GGX(a2, ndoth);
-        let G = Height_Correlated_Smith_GGX(a2, ndotv, ndotl);
-        //let G =  Smith_Schlick_GGX(ndotv, ndotl, roughness);
+        let G2 = Height_Correlated_Smith_GGX(a2, ndotv, ndotl);
+        let G1 = Smith_GGX_G1(a2, ndotv);
 
-        let specular = D * G / (4 * ndotl * ndotv);
+        let specular = D * G2 / (4 * ndotl * ndotv);
         let diffuse = color / PI;
 
-        let tran_diffuse =  (1.0 - tran) * diffuse; //this is because the btdf part is above and not mixed like the spec
+        let tran_diffuse =  (1.0 - tran) * diffuse; //this is because the btdf part is below and not mixed like the spec
 
         let dielectric_brdf = mix(tran_diffuse, vec3(specular), dielectric_fresnel);
         let metal_brdf = metal_fresnel * specular;
 
         let material = mix(dielectric_brdf, metal_brdf, metal);
 
-        let spec_pdf = spec_weight * (D * ndoth) / (4.0 * vdoth);
+        //let spec_pdf = spec_weight * (D * ndoth) / (4.0 * vdoth);
+        let spec_pdf = spec_weight * D * G1 / (4 * ndotv);
         let diff_pdf = diff_weight * (ndotl / PI);
-        let light_pdf = light_weight * sphere_pdf(origin, scattered, spheres[1], normal);
+        let light_pdf = light_weight * sphere_pdf(origin, scattered, spheres[2], normal);
 
         let pdf = spec_pdf + diff_pdf + light_pdf; //see notes for the specular part
 
@@ -496,10 +514,14 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
 
         let dielectric_fresnel = fresnel(f0, vdoth, ratio);
 
-        let eq41 = vdoth * Height_Correlated_Smith_GGX(a2, ndotv, ndotl) / (ndotv * ndoth);
+        let G2 = Height_Correlated_Smith_GGX(a2, ndotv, ndotl);
+        let G1 = Smith_GGX_G1(a2, ndotv);
+
+        //let eq41 = vdoth * G2 / (ndotv * ndoth);
+        let eq19 = G2 / G1;
 
         //see the tranmission modified spec (1-m) * t * (1 - F) * eq41 * baseColor / pdf
-        atten *= (1.0 - metal) * (1.0 - dielectric_fresnel) * tran * color * eq41 / tran_weight;
+        atten *= (1.0 - metal) * (1.0 - dielectric_fresnel) * tran * color * eq19 / tran_weight;
 
         return Scatter(atten, Ray(origin, scattered));
     }
@@ -694,12 +716,14 @@ fn fs_main(in: output) -> @location(0) vec4f {
     var light = vec3f(1.0);
     var cur = vec3f(0.0);
 
+    let sky = vec3(0.0);
+
     for(var j= 0; j < 12; j++) {
         let closest = bvh_intersect(ray);
 
         if closest.t < INF {
         } else {
-            cur += vec3(0.) * light;
+            cur += sky * light;
             break;
         }
 

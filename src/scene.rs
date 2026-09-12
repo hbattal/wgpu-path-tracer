@@ -43,7 +43,7 @@ impl Scene {
         let mut world_triangle: Vec<TriangleGPU> = Vec::new();
         let mut world_mats: Vec<PBRMaterialGPU> = Vec::new();
 
-        let bytes = include_bytes!("../models/dragon.glb");
+        let bytes = include_bytes!("../models/p6.glb");
 
         let (layout, group) = Scene::load_gltf(
             bytes,
@@ -75,7 +75,7 @@ impl Scene {
             0.12,
             glam::Vec3::from_array([0.0, 0.0, 0.0]).extend(1.0),
             -1,
-            0.0,
+            1.5,
             0.0,
             -1,
             glam::vec4(1.0, 1.0, 1.0, 1.0),
@@ -118,9 +118,9 @@ impl Scene {
             -1,
             0.0,
             0.0,
-            glam::Vec3::from_array([4.0, 4.0, 4.0]).extend(1.0),
+            glam::Vec3::from_array([3.0, 3.0, 3.0]).extend(1.0),
             -1,
-            0.0,
+            1.5,
             0.0,
             -1,
             glam::vec4(1.0, 1.0, 1.0, 1.0),
