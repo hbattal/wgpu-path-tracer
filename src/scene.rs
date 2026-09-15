@@ -72,7 +72,7 @@ impl Scene {
             -1,
             -1,
             1.0,
-            0.12,
+            0.15,
             glam::Vec3::from_array([0.0, 0.0, 0.0]).extend(1.0),
             -1,
             1.5,
@@ -111,14 +111,13 @@ impl Scene {
             world_mats.len() as u32,
         ));
 
-        //ground mat
         world_mats.push(PBRMaterialGPU::new(
             glam::Vec4::from_array([0.0, 0.0, 0.0, 1.0]),
             -1,
             -1,
             0.0,
             0.0,
-            glam::Vec3::from_array([3.0, 3.0, 3.0]).extend(1.0),
+            glam::Vec3::from_array([4.0, 4.0, 4.0]).extend(1.0),
             -1,
             1.5,
             0.0,

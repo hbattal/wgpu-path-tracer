@@ -18,7 +18,7 @@ Todos:
 - [x] glTF model loading + material integration
 - [x] Texture support for the web (Atlas because webgpu is dum)
 - [ ] some sort of ui (egui), scenes, etc.
-- [ ] clean and restructure
+- [ ] clean and restructure (eval model)
 - [x] upgrade it to a BSDF (read 2007 Walter)
 - [x] VNDF (read 2018 Heitz)
 - [ ] Finish pbrt

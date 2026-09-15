@@ -243,7 +243,7 @@ const INF = 3.4e+38;
 //Normal Distrubution Function
 fn Trowbridge_Reitz_GGX(a2: f32, ndoth: f32) -> f32 {
     let denom = ndoth * ndoth * (a2 - 1.0) + 1.0;
-    return a2 / (PI * denom * denom);
+    return check(ndoth) * a2 / (PI * denom * denom);
 }
 
 //see derivation in notes
@@ -301,15 +301,16 @@ fn tbn(normal: vec3f) -> mat3x3f {
     return mat3x3f(u, v, normal);
 }
 
+//vdoth ommitted because of Dv
 fn Smith_GGX_G1(a2: f32, ndotx: f32) -> f32 {
     return 2.0 * ndotx / (ndotx + sqrt(a2 + (1.0 - a2) * ndotx * ndotx));
 }
 
-fn Height_Correlated_Smith_GGX(a2: f32, ndotv: f32, ndotl: f32) -> f32 {
-    let lv = ndotv * sqrt(a2 + (1.0 - a2) * ndotl * ndotl);
-    let vl = ndotl * sqrt(a2 + (1.0 - a2) * ndotv * ndotv);
+fn Height_Correlated_Smith_GGX(a2: f32, ndotv: f32, ndotl: f32, vdoth: f32, ldoth: f32) -> f32 {
+    let lv = ndotv * sqrt(a2 + (1.0 - a2) * abs(ndotl) * abs(ndotl));
+    let vl = abs(ndotl) * sqrt(a2 + (1.0 - a2) * ndotv * ndotv);
 
-    return (2.0 * ndotl * ndotv) / (lv + vl);
+    return check(vdoth) * check(ndotl * ldoth) * (2.0 * abs(ndotl) * ndotv) / (lv + vl);
 }
 
 //Fresnel
@@ -350,9 +351,12 @@ fn dead_record() -> HitRecord {
     return HitRecord(vec3(0.0), 0.0, 0, vec2(0.0));
 }
 
+fn check(x: f32) -> f32 {
+    return select(0.0, 1.0, x > 0.0);
+}
+
 //microfacet BSDF + sampling the next dir
-//the strcuture needs to change tho similra to the sample + eval separate model
-fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
+fn bsdf(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
 
     let inc = normalize(ray.dir);
 
@@ -378,7 +382,7 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     }
 
     let roughness = clamp(rough, 0.03, 1.0); //if this is zero bad things happen (D becomes 0/0)
-    let a = roughness * roughness;
+    var a = roughness * roughness;
     var a2 = a * a;
 
     var tran = mat.tran_factor;
@@ -386,13 +390,27 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
         tran *= sample(mat.tran, mat.tran_sampler, hit.uv).r;
     }
 
-    var h: vec3f;
-    var scattered: vec3f;
-    var atten = vec3(1.0);
+    var tran_color = color;
 
-    let ratio = select(mat.ior, 1 / mat.ior, side);
+    //quicky haks for gltf scenes without tranmission
+    if opacity < 1 && tran == 0.0 {
+        tran = 1.0;
+        tran_color = vec3(1.0);
+
+        a /= 8;
+        a2 = a * a;
+    }
+
+    let etai = select(mat.ior, 1.0, side);
+    let etao = select(1.0, mat.ior, side);
+
+    let ratio = etai / etao;
+
     let f0 = vec3(f0(mat.ior));
     let thin = mat.thick_factor == 0;
+
+    var scattered: vec3f;
+    var atten = vec3(1.0);
 
     //this is wrong in many many levels
     //doesnt work with nested volumes
@@ -400,7 +418,9 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
        atten *= pow(mat.atten_color.rgb, vec3(hit.t / (mat.atten_dist * 10.0)));
     }
 
-    //MIS, fixed for now
+    //sampling start
+
+    //MIS, using the balance heuristic
     let tran_weight = min(tran, 0.5);
 
     let rest = 1.0 - tran_weight;
@@ -412,12 +432,10 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
 
     var origin = at(ray, hit.t);
 
-    var above = true;
 
     if chance < tran_weight {
         //TIR? 0.0 atten | tran is 0? 0.0 atten
-        above = false;
-        h = sample_vndf(-inc, a, normal);
+        let h = sample_vndf(-inc, a, normal);
         //h = sample_ndf(a2, normal);
 
         //now it matters if the material actually has volume or not given by thick_factor
@@ -434,99 +452,112 @@ fn scatter(ray: Ray, hit: HitRecord, mat: Material) -> Scatter {
     }
 
     else if chance < spec_weight + tran_weight {
-        h = sample_vndf(-inc, a, normal);
-        //h = sample_ndf(a2, normal);
+        let h = sample_vndf(-inc, a, normal);
         scattered = normalize(reflect(inc, h));
+
     } else  if chance < spec_weight + diff_weight + tran_weight {
         scattered = normalize(normal + ssp());
-        h = normalize(-inc + scattered);
     } else {
-        scattered = sphere_dirgen(spheres[2], origin, normal);
-        h = normalize(-inc + scattered);
+        scattered = sphere_dirgen(spheres[1], origin, normal);
     }
 
+    //eval
+    let ndotl = dot(normal, scattered);
+    let ndotv = dot(normal, -inc);
+
+    let h_r = normalize(-inc + scattered);
+    let ndoth_r = dot(normal, h_r);
+    let vdoth_r = dot(-inc, h_r);
+    let ldoth_r = dot(scattered, h_r);
+
+    var h_t: vec3f;
+    var l_t: vec3f;
+
+    if thin {
+        l_t = reflect(scattered, normal);
+        h_t = normalize(-inc + l_t);
+    }
+
+    else {
+        l_t = scattered;
+        h_t = normalize(etai * -inc + etao * scattered);
+        h_t = select(-h_t, h_t, dot(h_t, normal) > 0);
+    }
+
+    let ndoth_t = dot(normal, h_t);
+    let vdoth_t = dot(-inc, h_t);
+    let ldoth_t = dot(l_t, h_t);
+
+    let D_r = Trowbridge_Reitz_GGX(a2, ndoth_r);
+    let D_t = Trowbridge_Reitz_GGX(a2, ndoth_t);
+    let G1 = Smith_GGX_G1(a2, ndotv);
+
+    let d = etai * vdoth_t + etao * ldoth_t;
+
+    var f: vec3f;
+
     //brdf
-    if above {
-        let ndotl = dot(normal, scattered);
-        let output = Ray(origin, scattered);
+    if ndotl > 0 {
 
-        //l = scattered, v = inc
-        //note that dot(n, l) <= 0 covers the case where dot(v, h) is pos
-        //l = v - 2 * dot(v, h) * h
-        //dot(n, l) = dot(n, v) - 2 * dot(v, h) * dot(n, h) where dot(n, h) is always positive
-        //since inc is into the surface dot(n, v) is neg, the bad case where dot(v, h) is poitive results at dot(n, l) negative
-        if ndotl <= 0.0 { //this also requires ldoth > 0 which is the case for reflection?
-            return dead();
-        }
+        let dielectric_fresnel = fresnel(f0, vdoth_r, ratio);
+        let metal_fresnel = fresnel(color, vdoth_r, ratio);
 
-        let ndotv = dot(normal, -inc);
-        let ndoth = dot(normal, h);
-        let vdoth = dot(-inc, h);
+        let G2 = Height_Correlated_Smith_GGX(a2, ndotv, ndotl, vdoth_r, ldoth_r);
 
-        let dielectric_fresnel = fresnel(f0, vdoth, ratio);
-        let metal_fresnel = fresnel(color, vdoth, ratio);
-
-        let D = Trowbridge_Reitz_GGX(a2, ndoth);
-        let G2 = Height_Correlated_Smith_GGX(a2, ndotv, ndotl);
-        let G1 = Smith_GGX_G1(a2, ndotv);
-
-        let specular = D * G2 / (4 * ndotl * ndotv);
+        let specular = D_r * G2 / (4 * ndotl * ndotv);
         let diffuse = color / PI;
 
-        let tran_diffuse =  (1.0 - tran) * diffuse; //this is because the btdf part is below and not mixed like the spec
+        let tran_diffuse =  (1.0 - tran) * diffuse; //this is because the btdf part is separate and not mixed like the spec
 
         let dielectric_brdf = mix(tran_diffuse, vec3(specular), dielectric_fresnel);
         let metal_brdf = metal_fresnel * specular;
 
-        let material = mix(dielectric_brdf, metal_brdf, metal);
-
-        //let spec_pdf = spec_weight * (D * ndoth) / (4.0 * vdoth);
-        let spec_pdf = spec_weight * D * G1 / (4 * ndotv);
-        let diff_pdf = diff_weight * (ndotl / PI);
-        let light_pdf = light_weight * sphere_pdf(origin, scattered, spheres[2], normal);
-
-        let pdf = spec_pdf + diff_pdf + light_pdf; //see notes for the specular part
-
-        atten *= material * ndotl / pdf;
-
-        return Scatter(atten, output);
+        f = mix(dielectric_brdf, metal_brdf, metal);
 
     }
 
-    //btdf
-    else if !above {
+    //btdf, with respect to the thin vs volume model in gltf
+    else {
 
-        let vdoth = dot(-inc, h);
+        let F = 1 - fresnel(f0, vdoth_t, ratio);
 
-        //see eq 7, 34 (33 ndoth is given) for the dot checks below
-        if vdoth <= 0.0 { // ndotv is given
-            return dead();
+        var frt: f32;
+        var G2: f32;
+
+        if thin {
+            G2 = Height_Correlated_Smith_GGX(a2, ndotv, -ndotl, vdoth_t, ldoth_t); //l is actually on the other side
+            frt =  D_t * G2 / (4 * abs(ndotl) * ndotv);
         }
 
-        let comp = select(scattered, reflect(scattered, normal), thin);
-        if dot(normal, comp) * dot(comp, h) <= 0 {
-            return dead();
+        else {
+            G2 = Height_Correlated_Smith_GGX(a2, ndotv, ndotl, vdoth_t, ldoth_t);
+            frt = (abs(vdoth_t) * abs(ldoth_t)) / (ndotv * abs(ndotl)) * etao * etao * D_t * G2 / (d * d); //this also filters bad transmission cuz of the g2 term
         }
 
-        let ndotl = abs(dot(normal, scattered)); //some resources omit the abs here
-        let ndotv = dot(normal, -inc);
-        let ndoth = dot(normal, h);
-
-        let dielectric_fresnel = fresnel(f0, vdoth, ratio);
-
-        let G2 = Height_Correlated_Smith_GGX(a2, ndotv, ndotl);
-        let G1 = Smith_GGX_G1(a2, ndotv);
-
-        //let eq41 = vdoth * G2 / (ndotv * ndoth);
-        let eq19 = G2 / G1;
-
-        //see the tranmission modified spec (1-m) * t * (1 - F) * eq41 * baseColor / pdf
-        atten *= (1.0 - metal) * (1.0 - dielectric_fresnel) * tran * color * eq19 / tran_weight;
-
-        return Scatter(atten, Ray(origin, scattered));
+        f = (1 - metal) * tran * tran_color * frt * F;
     }
 
-    return dead();
+    //pdf
+    let spec_pdf = spec_weight * D_r * G1 / (4 * ndotv);// * check(vdoth_r);
+    let diff_pdf = diff_weight * (max(ndotl, 0.0) / PI);
+    let light_pdf = light_weight * sphere_pdf(origin, scattered, spheres[1], normal);
+
+    var tran_pdf = tran_weight;
+
+    if thin {
+        tran_pdf *= D_t * G1 / (4 * ndotv);// * check(vdoth_t);
+    }
+
+    else { //this is cursed and im not sure
+        tran_pdf *= D_t * G1 * max(vdoth_t, 0.0) / ndotv * etao * etao * max(-ldoth_t, 0.0) / (d * d); //unlike frt above, there is no g2, thus the needed checks
+    }
+
+    let pdf = spec_pdf + diff_pdf + light_pdf + tran_pdf;
+
+    atten *= f * abs(ndotl) / pdf;
+    let output = Ray(origin, scattered);
+
+    return Scatter(atten, output);
 }
 
 fn ssp() -> vec3f {
@@ -718,7 +749,7 @@ fn fs_main(in: output) -> @location(0) vec4f {
 
     let sky = vec3(0.0);
 
-    for(var j= 0; j < 12; j++) {
+    for(var j= 0; j < 6; j++) {
         let closest = bvh_intersect(ray);
 
         if closest.t < INF {
@@ -727,7 +758,7 @@ fn fs_main(in: output) -> @location(0) vec4f {
             break;
         }
 
-        let scatter_ray = scatter(ray, closest, materials[closest.mat]);
+        let scatter_ray = bsdf(ray, closest, materials[closest.mat]);
 
         var emiss = materials[closest.mat].emiss_factor.rgb;
 
